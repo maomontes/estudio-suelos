@@ -1,0 +1,18 @@
+---
+title: "suelos"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+
+
+df <- readxl::read_xlsx("data/Resultados_de_An_lisis_de_Laboratorio_Suelos_en_Colombia.xlsx") %>% 
+  janitor::clean_names()
+```
+
