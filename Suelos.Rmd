@@ -11,16 +11,24 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(tidyverse)
 library(readxl)
-library(naniar)
 
 
 df <- readxl::read_xlsx("data/Resultados_de_An_lisis_de_Laboratorio_Suelos_en_Colombia.xlsx") %>% 
-  janitor::clean_names() %>% 
-  mutate(across(p_h_agua_suelo_2_5_1_0:zinc_zn_disponible_doble_cido_mg_kg, ~ as.numeric(.x))) %>% 
-  filter(cultivo != "No indica")
+  janitor::clean_names() 
+  # mutate(across(p_h_agua_suelo_2_5_1_0:zinc_zn_disponible_doble_cido_mg_kg, ~ as.numeric(.x)))
 
 #df <- read_excel("data/Resultados_de_An_lisis_de_Laboratorio_Suelos_en_Colombia.xlsx")
 
+
+```
+
+
+
+
+```{r}
+df %>%
+  count(p_h_agua_suelo_2_5_1_0, sort = T) %>% 
+  filter(str_detect(p_h_agua_suelo_2_5_1_0, ","))
 ```
 
 ```{r}
@@ -28,15 +36,20 @@ df %>%
   count(cultivo, sort = T)
 
 df_rec <- df %>% 
-  select(cultivo, p_h_agua_suelo_2_5_1_0:zinc_zn_disponible_doble_cido_mg_kg)
+  select(cultivo, departamento, p_h_agua_suelo_2_5_1_0:zinc_zn_disponible_doble_cido_mg_kg)
   # group_by(cultivo) %>% 
   # summarise(across(2:21, ~ mean(.x)))
 
-map_dbl()
+df_rec %>% 
+  map(unique) %>% 
+  map_dbl(length)
 
-for(i in 1:ncol(df_rec)) {
-  df_rec[ , i][is.na(df_rec[ , i])] <- median(df_rec[ , i], na.rm=TRUE)
-}
+df_rec %>% summarise_all(n_distinct)
+
+# for(i in 1:ncol(df_rec)) {
+#   df_rec[ , i][is.na(df_rec[ , i])] <- median(df_rec[ , i], na.rm=TRUE)
+# }
+
 
 ```
 
@@ -64,6 +77,36 @@ dice <- function(sides) {
 
 dice(20)(20)
 
-map2_dbl(20, 20, dice)
+
+```
+
+```{r}
+library(VIM)
+library(mice)
+
+aggr_plot <- aggr(df_rec, col = c('navyblue', 'red'),
+                  numbers = TRUE,
+                  sortVars = TRUE,
+                  labels = names(df_rec),
+                  cex.axis = .7,
+                  gap = 3)
+
+```
+
+```{r}
+df_ex <- df_rec %>% 
+  select(cultivo, hierro_fe_disponible_olsen_mg_kg, potasio_k_intercambiable_cmol_kg, acidez_al_h_kcl_cmol_kg)
+
+# no es buena practica con el mean o median 
+df_ex$hierro_fe_disponible_olsen_mg_kg[which(is.na(df_ex$hierro_fe_disponible_olsen_mg_kg))] = mean(df_ex$hierro_fe_disponible_olsen_mg_kg, na.rm = T)
+
+
+#mice imputation
+my_imp <- mice(df_ex, m = 5, method = c("", "pmm", "pmm", "pmm"), maxit = 20)
+
+my_imp$imp$hierro_fe_disponible_olsen_mg_kg
+
+final_imp <- complete(my_imp, 5)
+
 ```
 
