@@ -10,9 +10,60 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 library(tidyverse)
+library(readxl)
+library(naniar)
 
 
 df <- readxl::read_xlsx("data/Resultados_de_An_lisis_de_Laboratorio_Suelos_en_Colombia.xlsx") %>% 
-  janitor::clean_names()
+  janitor::clean_names() %>% 
+  mutate(across(p_h_agua_suelo_2_5_1_0:zinc_zn_disponible_doble_cido_mg_kg, ~ as.numeric(.x))) %>% 
+  filter(cultivo != "No indica")
+
+#df <- read_excel("data/Resultados_de_An_lisis_de_Laboratorio_Suelos_en_Colombia.xlsx")
+
+```
+
+```{r}
+df %>% 
+  count(cultivo, sort = T)
+
+df_rec <- df %>% 
+  select(cultivo, p_h_agua_suelo_2_5_1_0:zinc_zn_disponible_doble_cido_mg_kg)
+  # group_by(cultivo) %>% 
+  # summarise(across(2:21, ~ mean(.x)))
+
+map_dbl()
+
+for(i in 1:ncol(df_rec)) {
+  df_rec[ , i][is.na(df_rec[ , i])] <- median(df_rec[ , i], na.rm=TRUE)
+}
+
+```
+
+```{r}
+df_rec %>% 
+  transmute(map_sqrt = map_dbl(p_h_agua_suelo_2_5_1_0, sqrt))
+
+
+my_fn <- function(x) {
+  if(x > 0) {
+    x + 1
+  }
+}
+
+my_fn(19)
+
+map_dbl(19, my_fn)
+
+
+dice <- function(sides) {
+  function(rolls) {
+    sample(1:sides, rolls, TRUE)
+  }
+}
+
+dice(20)(20)
+
+map2_dbl(20, 20, dice)
 ```
 
