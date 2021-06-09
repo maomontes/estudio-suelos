@@ -7,51 +7,265 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-
 ```{r}
 library(tidyverse)
 library(readxl)
+library(stringr)
 
+#libraries to impute missing values
+library(VIM)
+library(mice)
+
+theme_set(theme_minimal())
+
+#df_raw <- readxl::read_xlsx("data/Resultados_de_An_lisis_de_Laboratorio_Suelos_en_Colombia.xlsx")
 
 df <- readxl::read_xlsx("data/Resultados_de_An_lisis_de_Laboratorio_Suelos_en_Colombia.xlsx") %>% 
-  janitor::clean_names() 
-  # mutate(across(p_h_agua_suelo_2_5_1_0:zinc_zn_disponible_doble_cido_mg_kg, ~ as.numeric(.x)))
+  janitor::clean_names() %>% 
+  mutate(across(p_h_agua_suelo_2_5_1_0:zinc_zn_disponible_doble_cido_mg_kg, ~ as.numeric(.x))) %>% 
+  select(-numfila, -acidez_al_h_kcl_cmol_kg, -aluminio_al_intercambiable_cmol_kg,
+         -hierro_fe_disponible_doble_cido_mg_kg:-secuencial, -estado,
+         -tiempo_establecimiento, -drenaje:-fecha_analisis)
+  
+df <- df %>% 
+  mutate(cultivo = str_replace_all(cultivo, pattern = c("No indica" = NA_character_)),
+         topografia = str_remove_all(topografia, pattern = c("No indica" = NA_character_)),
+         topografia = str_remove_all(topografia, pattern = c("ERROR: #N/A" = NA_character_))) %>% 
+  filter(!is.na(cultivo), !is.na(topografia))
 
-#df <- read_excel("data/Resultados_de_An_lisis_de_Laboratorio_Suelos_en_Colombia.xlsx")
-
+df <- df %>% 
+  mutate(cultivo = str_to_title(cultivo, locale = "es"),
+         topografia = str_to_title(topografia, locale = "es"),
+         departamento = str_to_title(departamento, locale = "es"),
+         municipio = str_to_title(municipio, locale = "es"),
+         cultivo = str_replace_all(cultivo, pattern = c("/" = "-")))
 
 ```
 
 
+```{r}
+aggr_plot <- aggr(df, col = c('navyblue', 'red'),
+                  numbers = TRUE,
+                  sortVars = TRUE,
+                  labels = names(df),
+                  cex.axis = .7,
+                  gap = 3)
+
+```
+
+```{r}
+
+# no es buena practica con el mean o median 
+# df_ex$hierro_fe_disponible_olsen_mg_kg[which(is.na(df_ex$hierro_fe_disponible_olsen_mg_kg))] = mean(df_ex$hierro_fe_disponible_olsen_mg_kg, na.rm = T)
 
 
+
+
+#mice imputation
+my_imp <- mice(df_ex, m = 5, method = c("", "pmm", "pmm", "pmm"), maxit = 20)
+
+my_imp$imp$hierro_fe_disponible_olsen_mg_kg
+
+final_imp <- complete(my_imp, 5)
+
+```
+
+```{r}
+my_imp <- mice(df, m = 5, method = c("", "", "", "", "pmm", "pmm", "pmm",
+                                     "pmm", "pmm", "pmm", "pmm", "pmm",
+                                     "pmm", "pmm", "pmm", "pmm", "pmm",
+                                     "pmm", "pmm"), maxit = 20)
+
+my_imp$imp$sodio_na_intercambiable_cmol_kg
+
+final_imp <- complete(my_imp, 2) %>% 
+  as_tibble(final_imp)
+
+saveRDS(final_imp, "data/final_imp.RDS")
+
+final_imp <- readRDS("data/final_imp.RDS")
+```
+
+```{r}
+library(tidymodels)
+library(tidytext)
+
+
+##-----Correlation-----
+library(corrr)
+
+final_imp %>%
+  select(p_h_agua_suelo_2_5_1_0:boro_b_disponible_mg_kg) %>%
+  correlate() %>%
+  rearrange() %>%
+  shave() %>% view()
+  rplot(shape = 15, colours = c("darkorange", "white", "darkcyan"))
+
+##---------------------
+
+df_final <- final_imp %>%
+  filter(str_detect(departamento, "Caldas")) %>% 
+  select(-departamento, -municipio)
+
+
+pca_rep <- recipe(~., data = df_final) %>% 
+  update_role(cultivo, topografia, new_role = "id") %>% 
+  step_normalize(all_predictors()) %>% 
+  step_pca(all_predictors())
+
+pca_prep <- prep(pca_rep)
+
+pca_prep
+
+tidied_pca <- tidy(pca_prep, 2)
+
+tidied_pca %>% 
+  filter(component %in% paste0("PC", 1:5)) %>% 
+  mutate(component = fct_inorder(component)) %>% 
+  ggplot(aes(value, terms, fill = terms)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~component, nrow = 1) + 
+  labs(y=NULL)
+
+
+
+tidied_pca %>% 
+  filter(component %in% paste0("PC", 1:4)) %>% 
+  group_by(component) %>% 
+  top_n(8, abs(value)) %>% 
+  ungroup() %>% 
+  mutate(terms = reorder_within(terms, abs(value), component)) %>% 
+  ggplot(aes(abs(value), terms, fill = value > 0)) +
+  geom_col() +
+  facet_wrap(~component, scales = "free_y") +
+  scale_y_reordered() +
+  labs(x = "Absolute Value Contribution",
+       y = NULL, fill = "Positive?")
+
+
+juice(pca_prep) %>% 
+  ggplot(aes(PC2, PC3, label = cultivo)) +
+  geom_point(aes(color = topografia), alpha = 0.4, size = 2) +
+  geom_text(check_overlap = TRUE, hjust = "inward", family = "Source Pro Sans") +
+  labs(color = NULL)
+
+```
+
+
+Caldas
+```{r}
+
+df_final_cal <- final_imp %>%
+  filter(str_detect(departamento, "Caldas")) %>% 
+  select(-departamento, -municipio)
+
+
+pca_rep <- recipe(~., data = df_final_cal) %>% 
+  update_role(cultivo, topografia, new_role = "id") %>% 
+  step_normalize(all_predictors()) %>% 
+  step_pca(all_predictors())
+
+pca_prep <- prep(pca_rep)
+
+pca_prep
+
+tidied_pca <- tidy(pca_prep, 2)
+
+tidied_pca %>% 
+  filter(component %in% paste0("PC", 1:5)) %>% 
+  mutate(component = fct_inorder(component)) %>% 
+  ggplot(aes(value, terms, fill = terms)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~component, nrow = 1) + 
+  labs(y=NULL)
+
+
+
+tidied_pca %>% 
+  filter(component %in% paste0("PC", 1:4)) %>% 
+  group_by(component) %>% 
+  top_n(8, abs(value)) %>% 
+  ungroup() %>% 
+  mutate(terms = reorder_within(terms, abs(value), component)) %>% 
+  ggplot(aes(abs(value), terms, fill = value > 0)) +
+  geom_col() +
+  facet_wrap(~component, scales = "free_y") +
+  scale_y_reordered() +
+  labs(x = "Absolute Value Contribution",
+       y = NULL, fill = "Positive?")
+
+
+juice(pca_prep) %>% 
+  ggplot(aes(PC2, PC3, label = cultivo)) +
+  geom_point(aes(color = topografia), alpha = 0.7, size = 1.5) +
+  geom_text(check_overlap = TRUE, hjust = "inward", family = "Source Pro Sans") +
+  labs(color = NULL)
+```
+
+
+FactomineR
+
+```{r}
+library(FactoMineR)
+```
+
+
+--------------------------------------------------------------------------------
+
+
+
+
+
+
+
+--------------------------------------------------------------------------------
 ```{r}
 df %>%
   count(p_h_agua_suelo_2_5_1_0, sort = T) %>% 
-  filter(str_detect(p_h_agua_suelo_2_5_1_0, ","))
+  filter(str_detect(p_h_agua_suelo_2_5_1_0, ",")) %>% 
+  mutate(p_h_agua_suelo_2_5_1_0 = str_replace_all(p_h_agua_suelo_2_5_1_0, pattern = c(','='.',
+                                                                                      '<'='',
+                                                                                      ' '='')))
+
+
+df %>%
+  #count(p_h_agua_suelo_2_5_1_0, sort = T) %>% 
+  #filter(str_detect(p_h_agua_suelo_2_5_1_0, ",")) %>% 
+  mutate(p_h_agua_suelo_2_5_1_0 = str_replace_all(p_h_agua_suelo_2_5_1_0, pattern = c('[[:punct:]]' = '.',
+                                                                                      '<' = '',
+                                                                                      '\\s' = "")),
+         p_h_agua_suelo_2_5_1_0 = as.numeric(p_h_agua_suelo_2_5_1_0))
+
+
+
+df %>% 
+  filter(str_detect(cultivo, '[[:punct:]]')) %>% 
+  count(cultivo, sort = T) %>% view()
+
+
+df %>% 
+  mutate(cultivo = str_to_lower(cultivo, locale = "es")) %>% 
+  count(cultivo, sort = T) %>%
+  filter(str_detect(cultivo, "/")) %>% 
+  mutate(cultivo = str_replace_all(cultivo, pattern = c("/" = "-")))
+
+
+df %>% 
+  mutate(cultivo = str_to_title(cultivo, locale = "es"))
 ```
 
 ```{r}
 df %>% 
-  count(cultivo, sort = T)
+  count(riego, sort = T) %>% 
+  mutate(percent = n/sum(n))
 
-df_rec <- df %>% 
-  select(cultivo, departamento, p_h_agua_suelo_2_5_1_0:zinc_zn_disponible_doble_cido_mg_kg)
-  # group_by(cultivo) %>% 
-  # summarise(across(2:21, ~ mean(.x)))
-
-df_rec %>% 
-  map(unique) %>% 
-  map_dbl(length)
-
-df_rec %>% summarise_all(n_distinct)
-
-# for(i in 1:ncol(df_rec)) {
-#   df_rec[ , i][is.na(df_rec[ , i])] <- median(df_rec[ , i], na.rm=TRUE)
-# }
-
-
+# df_rec <- df %>% 
+#   select(cultivo, departamento, p_h_agua_suelo_2_5_1_0:zinc_zn_disponible_doble_cido_mg_kg)
+#   group_by(cultivo) %>% 
+#   summarise(across(2:21, ~ mean(.x)))
 ```
+
+
 
 ```{r}
 df_rec %>% 
@@ -76,37 +290,10 @@ dice <- function(sides) {
 }
 
 dice(20)(20)
-
-
 ```
 
-```{r}
-library(VIM)
-library(mice)
-
-aggr_plot <- aggr(df_rec, col = c('navyblue', 'red'),
-                  numbers = TRUE,
-                  sortVars = TRUE,
-                  labels = names(df_rec),
-                  cex.axis = .7,
-                  gap = 3)
-
-```
-
-```{r}
-df_ex <- df_rec %>% 
-  select(cultivo, hierro_fe_disponible_olsen_mg_kg, potasio_k_intercambiable_cmol_kg, acidez_al_h_kcl_cmol_kg)
-
-# no es buena practica con el mean o median 
-df_ex$hierro_fe_disponible_olsen_mg_kg[which(is.na(df_ex$hierro_fe_disponible_olsen_mg_kg))] = mean(df_ex$hierro_fe_disponible_olsen_mg_kg, na.rm = T)
 
 
-#mice imputation
-my_imp <- mice(df_ex, m = 5, method = c("", "pmm", "pmm", "pmm"), maxit = 20)
 
-my_imp$imp$hierro_fe_disponible_olsen_mg_kg
 
-final_imp <- complete(my_imp, 5)
-
-```
 
